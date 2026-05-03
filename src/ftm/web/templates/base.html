@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{% block title %}follow-the-money{% endblock %}</title>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; max-width: 1000px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+    a { color: #035; }
+    h1 { margin-top: 0; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border-bottom: 1px solid #ddd; padding: 0.5rem 0.75rem; text-align: left; }
+    th { background: #f7f7f7; }
+    .filters { margin: 1rem 0; }
+    .filters input, .filters select { padding: 0.25rem 0.5rem; }
+    .chamber { font-size: 0.85rem; padding: 0.1rem 0.4rem; border-radius: 4px; background: #eef; }
+    .chamber.senate { background: #fee; }
+    .section { margin: 1.5rem 0; }
+    .section h3 { margin: 0.5rem 0; }
+    .section ul { margin: 0.25rem 0 0 1.25rem; }
+    .doc { border: 1px solid #ddd; border-radius: 6px; padding: 0.75rem 1rem; margin: 1rem 0; }
+    .meta { color: #666; font-size: 0.85rem; }
+    .empty { color: #999; font-style: italic; }
+  </style>
+</head>
+<body>
+  <header><a href="/">follow-the-money</a></header>
+  {% block content %}{% endblock %}
+</body>
+</html>
