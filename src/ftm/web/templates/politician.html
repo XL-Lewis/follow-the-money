@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}{{ politician.name }} &mdash; follow-the-money{% endblock %}
+{% block content %}
+<h1>{{ politician.name }}</h1>
+<p class="meta">
+  <span class="chamber {{ politician.chamber }}">{{ politician.chamber }}</span>
+  {% if politician.party %} &middot; {{ politician.party }}{% endif %}
+  {% if politician.electorate_or_state %} &middot; {{ politician.electorate_or_state }}{% endif %}
+</p>
+
+{% if not documents %}
+  <p class="empty">No declarations yet.</p>
+{% endif %}
+
+{% for doc in documents %}
+<div class="doc">
+  <h2>{{ doc.kind | capitalize }}</h2>
+  <p class="meta">
+    <a href="/raw/{{ doc.version.content_sha256 }}.pdf">Original PDF</a>
+    &middot; fetched {{ doc.version.fetched_at }}
+    &middot; <a href="{{ doc.source_url }}">source</a>
+  </p>
+  {% for cat in categories %}
+    {% set items = doc.items_by_cat.get(cat, []) %}
+    {% if items %}
+    <div class="section">
+      <h3>{{ category_labels[cat] }}</h3>
+      <ul>
+        {% for item in items %}
+          <li>{{ item }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+  {% endfor %}
+</div>
+{% endfor %}
+{% endblock %}
