@@ -39,6 +39,7 @@ def _senate_list(cdap_ids: list[str], *, page: int = 1, page_count: int = 1) -> 
 
 
 SENATE_STATEMENT = (FIXTURES / "senate_statement.json").read_bytes()
+HOUSE_PDF = (FIXTURES / "house_statement_abdo.pdf").read_bytes()
 
 
 def _list_url(page: int) -> str:
@@ -152,27 +153,50 @@ def test_run_fetch_moves_document_when_url_changes(cfg: Config, jane_pdf: bytes,
     assert [tuple(r) for r in docs] == [(moved_url, 2)]
 
 
+def _declarations(cfg: Config) -> set[tuple]:
+    conn = db_module.connect(cfg.db_path)
+    try:
+        rows = conn.execute(
+            "SELECT p.chamber, dl.category, dl.change, dl.item_text FROM declarations dl "
+            "JOIN document_versions v ON v.id = dl.document_version_id "
+            "JOIN documents d ON d.id = v.document_id "
+            "JOIN politicians p ON p.id = d.politician_id"
+        ).fetchall()
+    finally:
+        conn.close()
+    return {tuple(r) for r in rows}
+
+
 @responses.activate
-def test_run_parse_populates_declarations_from_both_formats(cfg: Config, jane_pdf: bytes):
+def test_run_parse_populates_declarations_from_both_formats(cfg: Config):
+    _add_first_run(responses, HOUSE_PDF)
+    run_fetch(cfg)
+    run_parse(cfg)
+
+    rows = _declarations(cfg)
+    assert ("house", "other_assets", "deletion", "Digital Currency") in rows
+    assert ("senate", "gifts", "addition", "3 Cartons of Beer from the Brewers Association.") in rows
+
+
+@responses.activate
+def test_run_parse_records_unsupported_pdf_and_continues(cfg: Config, jane_pdf: bytes):
     _add_first_run(responses, jane_pdf)
     run_fetch(cfg)
     run_parse(cfg)
 
     conn = db_module.connect(cfg.db_path)
-    rows = conn.execute(
-        "SELECT p.chamber, dl.category, dl.change, dl.item_text FROM declarations dl "
-        "JOIN document_versions v ON v.id = dl.document_version_id "
-        "JOIN documents d ON d.id = v.document_id "
-        "JOIN politicians p ON p.id = d.politician_id"
+    errors = conn.execute(
+        "SELECT d.format, v.parse_error IS NOT NULL FROM document_versions v "
+        "JOIN documents d ON d.id = v.document_id ORDER BY d.format"
     ).fetchall()
-    rows = {tuple(r) for r in rows}
-    assert ("house", "shareholdings", "statement", "BHP Group Ltd") in rows
-    assert ("senate", "gifts", "addition", "3 Cartons of Beer from the Brewers Association.") in rows
+    conn.close()
+    assert [tuple(r) for r in errors] == [("json", 0), ("pdf", 1)]
+    assert {r[0] for r in _declarations(cfg)} == {"senate"}
 
 
 @responses.activate
-def test_run_parse_is_idempotent(cfg: Config, jane_pdf: bytes):
-    _add_first_run(responses, jane_pdf)
+def test_run_parse_is_idempotent(cfg: Config):
+    _add_first_run(responses, HOUSE_PDF)
     run_fetch(cfg)
     run_parse(cfg)
     first = _count(cfg, "declarations")
