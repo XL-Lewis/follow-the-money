@@ -12,9 +12,7 @@ from .declarations import Declaration
 from .fetch import house, senate
 from .fetch.client import USER_AGENT, get_with_cache
 from .fetch.politician import DiscoveredPolitician
-from .parse import pdf as pdf_parse
-from .parse import senate_json
-from .parse.sections import iter_items, split_into_sections
+from .parse import house_pdf, senate_json
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +109,7 @@ def run_fetch(cfg: Config, *, session: requests.Session | None = None) -> None:
 def _parse_document(path: Path, format: str) -> list[Declaration]:
     if format == "json":
         return senate_json.parse(path.read_bytes())
-    return list(iter_items(split_into_sections(pdf_parse.extract_text(path))))
+    return house_pdf.parse(path)
 
 
 def run_parse(cfg: Config) -> None:
@@ -127,10 +125,16 @@ def run_parse(cfg: Config) -> None:
             if not file_path.exists():
                 logger.warning("missing file for version %s: %s", latest["id"], file_path)
                 continue
+            try:
+                items, error = _parse_document(file_path, doc["format"]), None
+            except house_pdf.UnsupportedDocument as exc:
+                logger.warning("unparseable document %s: %s", latest["id"], exc)
+                items, error = [], str(exc)
             db_module.replace_declarations(
                 conn,
                 document_version_id=int(latest["id"]),
-                items=_parse_document(file_path, doc["format"]),
+                items=items,
+                parse_error=error,
             )
     finally:
         conn.close()

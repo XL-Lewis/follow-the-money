@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS document_versions (
     etag TEXT,
     last_modified TEXT,
     fetched_at TEXT NOT NULL,
+    parse_error TEXT,
     UNIQUE(document_id, content_sha256)
 );
 
@@ -184,11 +185,16 @@ def replace_declarations(
     *,
     document_version_id: int,
     items: Iterable[Declaration],
+    parse_error: str | None = None,
 ) -> None:
     now = _now()
     conn.execute(
         "DELETE FROM declarations WHERE document_version_id = ?",
         (document_version_id,),
+    )
+    conn.execute(
+        "UPDATE document_versions SET parse_error = ? WHERE id = ?",
+        (parse_error, document_version_id),
     )
     rows = [
         (

@@ -19,6 +19,9 @@
     &middot; fetched {{ doc.version.fetched_at }}
     &middot; <a href="{{ doc.source_url }}">source</a>
   </p>
+  {% if doc.version.parse_error %}
+  <p class="empty">This document isn't in the standard register template (usually a scan), so its interests couldn't be extracted. See the original.</p>
+  {% endif %}
   {% for cat in categories %}
     {% set section = doc.sections.get(cat) %}
     {% if section and (section.statement or section.alterations) %}
