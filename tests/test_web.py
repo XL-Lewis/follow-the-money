@@ -4,6 +4,7 @@ import pytest
 
 from ftm import db as db_module
 from ftm.config import Config
+from ftm.declarations import Declaration
 from ftm.web.app import create_app
 
 
@@ -81,14 +82,21 @@ def seeded(tmp_data_dir: Path, pdf_builder):
         conn,
         document_version_id=jane_v,
         items=[
-            ("shareholdings", "BHP Group Ltd"),
-            ("gifts", "Bottle of wine"),
+            Declaration("shareholdings", "BHP Group Ltd"),
+            Declaration("real_estate", "Bondi NSW", holder="spouse"),
+            Declaration("gifts", "Bottle of wine"),
+            Declaration(
+                "gifts", "Hamper from Acme", change="addition", changed_on="2025-09-01"
+            ),
+            Declaration(
+                "gifts", "Bottle of wine", change="deletion", changed_on="2025-08-18"
+            ),
         ],
     )
     db_module.replace_declarations(
         conn,
         document_version_id=alice_v,
-        items=[("real_estate", "House, Carlton VIC")],
+        items=[Declaration("real_estate", "House, Carlton VIC")],
     )
     conn.close()
 
@@ -140,6 +148,16 @@ def test_politician_page_shows_categories_and_links(seeded):
     assert "Gifts" in body
     # Link to PDF by sha
     assert f"/raw/{jane_sha}.pdf" in body
+
+
+def test_politician_page_shows_alterations_in_date_order(seeded):
+    cfg, *_ = seeded
+    body = create_app(cfg).test_client().get("/p/jane-doe-house").get_data(as_text=True)
+    removed = body.index("Removed 2025-08-18")
+    added = body.index("Added 2025-09-01")
+    assert removed < added
+    assert "Hamper from Acme" in body[added:]
+    assert "Spouse / partner" in body
 
 
 def test_politician_page_404_for_unknown_slug(seeded):

@@ -1,24 +1,9 @@
 from __future__ import annotations
 
 import re
-from typing import Iterable, Iterator
+from typing import Iterator
 
-CATEGORIES: list[str] = [
-    "shareholdings",
-    "trusts",
-    "real_estate",
-    "directorships",
-    "partnerships",
-    "liabilities",
-    "bonds",
-    "savings",
-    "other_assets",
-    "income",
-    "gifts",
-    "travel",
-    "memberships",
-    "other",
-]
+from ..declarations import CATEGORIES, Declaration
 
 # Match the leading word(s) of each numbered section heading. The form text is
 # verbose; we anchor on the first few distinctive words.
@@ -120,7 +105,7 @@ def split_into_sections(text: str) -> dict[str, list[str]]:
     return sections
 
 
-def iter_items(sections: dict[str, list[str]]) -> Iterator[tuple[str, str]]:
+def iter_items(sections: dict[str, list[str]]) -> Iterator[Declaration]:
     for cat in CATEGORIES:
         for item in sections.get(cat, []):
-            yield cat, item
+            yield Declaration(category=cat, item_text=item)

@@ -7,7 +7,7 @@ from flask import Flask, abort, g, render_template, request, send_from_directory
 
 from .. import db as db_module
 from ..config import Config
-from ..parse.sections import CATEGORIES
+from ..declarations import CATEGORIES
 
 CATEGORY_LABELS: dict[str, str] = {
     "shareholdings": "Shareholdings",
@@ -24,6 +24,12 @@ CATEGORY_LABELS: dict[str, str] = {
     "travel": "Sponsored travel / hospitality",
     "memberships": "Memberships",
     "other": "Other interests",
+}
+
+HOLDER_LABELS: dict[str, str] = {
+    "self": "Self",
+    "spouse": "Spouse / partner",
+    "dependent": "Dependent child",
 }
 
 _SHA_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -87,19 +93,25 @@ def create_app(cfg: Config) -> Flask:
             latest = db_module.latest_version_for_document(conn, int(doc["document_id"]))
             if latest is None:
                 continue
-            items_by_cat: dict[str, list[str]] = {c: [] for c in CATEGORIES}
+            sections: dict[str, dict[str, list]] = {
+                c: {"statement": [], "alterations": []} for c in CATEGORIES
+            }
             for r in conn.execute(
-                "SELECT category, item_text FROM declarations "
-                "WHERE document_version_id = ? ORDER BY ordinal",
+                "SELECT category, change, holder, item_text, changed_on "
+                "FROM declarations WHERE document_version_id = ? "
+                "ORDER BY changed_on, ordinal",
                 (int(latest["id"]),),
             ).fetchall():
-                items_by_cat.setdefault(r["category"], []).append(r["item_text"])
+                bucket = "statement" if r["change"] == "statement" else "alterations"
+                sections.setdefault(
+                    r["category"], {"statement": [], "alterations": []}
+                )[bucket].append(r)
             per_doc.append(
                 {
                     "kind": doc["kind"],
                     "source_url": doc["source_url"],
                     "version": latest,
-                    "items_by_cat": items_by_cat,
+                    "sections": sections,
                 }
             )
         return render_template(
@@ -108,6 +120,7 @@ def create_app(cfg: Config) -> Flask:
             documents=per_doc,
             categories=CATEGORIES,
             category_labels=CATEGORY_LABELS,
+            holder_labels=HOLDER_LABELS,
         )
 
     @app.route("/raw/<sha>.pdf")
