@@ -33,6 +33,7 @@ HOLDER_LABELS: dict[str, str] = {
 }
 
 _SHA_RE = re.compile(r"^[0-9a-f]{64}$")
+_MIMETYPES = {"pdf": "application/pdf", "json": "application/json"}
 
 
 def create_app(cfg: Config) -> Flask:
@@ -79,20 +80,15 @@ def create_app(cfg: Config) -> Flask:
         ).fetchone()
         if pol is None:
             abort(404)
-        documents = conn.execute(
-            """
-            SELECT d.id AS document_id, d.kind, d.source_url
-            FROM documents d
-            WHERE d.politician_id = ?
-            ORDER BY d.kind, d.id
-            """,
+        doc = conn.execute(
+            "SELECT id, format, source_url FROM documents WHERE politician_id = ?",
             (pol["id"],),
-        ).fetchall()
-        per_doc = []
-        for doc in documents:
-            latest = db_module.latest_version_for_document(conn, int(doc["document_id"]))
-            if latest is None:
-                continue
+        ).fetchone()
+        latest = (
+            db_module.latest_version_for_document(conn, int(doc["id"])) if doc else None
+        )
+        document = None
+        if latest is not None:
             sections: dict[str, dict[str, list]] = {
                 c: {"statement": [], "alterations": []} for c in CATEGORIES
             }
@@ -106,26 +102,24 @@ def create_app(cfg: Config) -> Flask:
                 sections.setdefault(
                     r["category"], {"statement": [], "alterations": []}
                 )[bucket].append(r)
-            per_doc.append(
-                {
-                    "kind": doc["kind"],
-                    "source_url": doc["source_url"],
-                    "version": latest,
-                    "sections": sections,
-                }
-            )
+            document = {
+                "format": doc["format"],
+                "source_url": doc["source_url"],
+                "version": latest,
+                "sections": sections,
+            }
         return render_template(
             "politician.html",
             politician=pol,
-            documents=per_doc,
+            document=document,
             categories=CATEGORIES,
             category_labels=CATEGORY_LABELS,
             holder_labels=HOLDER_LABELS,
         )
 
-    @app.route("/raw/<sha>.pdf")
-    def raw_pdf(sha: str):
-        if not _SHA_RE.match(sha):
+    @app.route("/raw/<sha>.<ext>")
+    def raw_document(sha: str, ext: str):
+        if not _SHA_RE.match(sha) or ext not in _MIMETYPES:
             abort(404)
         row = get_conn().execute(
             "SELECT file_path FROM document_versions WHERE content_sha256 = ? LIMIT 1",
@@ -134,10 +128,10 @@ def create_app(cfg: Config) -> Flask:
         if row is None:
             abort(404)
         file_path = Path(row["file_path"])
-        if not file_path.exists():
+        if file_path.suffix != f".{ext}" or not file_path.exists():
             abort(404)
         return send_from_directory(
-            file_path.parent, file_path.name, mimetype="application/pdf"
+            file_path.parent, file_path.name, mimetype=_MIMETYPES[ext]
         )
 
     return app

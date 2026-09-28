@@ -6,7 +6,12 @@ from typing import Literal
 
 import requests
 
-USER_AGENT = "follow-the-money/0.1 (+https://github.com/)"
+# aph.gov.au's WAF rejects anything that does not look like a full browser UA.
+USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/128.0 Safari/537.36 "
+    "follow-the-money/0.1 (+https://github.com/XL-Lewis/follow-the-money)"
+)
 
 Status = Literal["new", "unchanged", "updated"]
 

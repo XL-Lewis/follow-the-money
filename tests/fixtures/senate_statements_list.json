@@ -1,0 +1,36 @@
+{
+ "statementOfRegisterableInterests": [
+  {
+   "cdapId": "317026",
+   "state": "Western Australia",
+   "name": "Whitten, Tyron",
+   "lastDateUpdated": "2026-06-04T16:41:28",
+   "lodgmentDate": "2025-08-18T14:00:00Z",
+   "title": "Senator",
+   "postNominal": "",
+   "senatorParty": "One Nation",
+   "publishNotes": false,
+   "statementNotes": "",
+   "id": "609a7a0d-cf7c-f011-b4cb-7c1e522a62fa"
+  },
+  {
+   "cdapId": "301128",
+   "state": "Victoria",
+   "name": "Darmanin, Lisa",
+   "lastDateUpdated": "2026-04-14T10:46:40",
+   "lodgmentDate": "2025-08-11T10:07:33Z",
+   "title": "Senator",
+   "postNominal": "",
+   "senatorParty": "Australian Labor Party",
+   "publishNotes": false,
+   "statementNotes": "",
+   "id": "d13dc18c-6376-f011-b4cb-000d3ad253b4"
+  }
+ ],
+ "currentPage": 1,
+ "pageCount": 1,
+ "pageSize": 100,
+ "rowCount": 2,
+ "wasSuccessful": true,
+ "errors": null
+}

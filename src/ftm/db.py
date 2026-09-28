@@ -20,9 +20,9 @@ CREATE TABLE IF NOT EXISTS politicians (
 
 CREATE TABLE IF NOT EXISTS documents (
     id INTEGER PRIMARY KEY,
-    politician_id INTEGER NOT NULL REFERENCES politicians(id),
-    kind TEXT NOT NULL CHECK (kind IN ('statement', 'alteration')),
-    source_url TEXT NOT NULL UNIQUE,
+    politician_id INTEGER NOT NULL UNIQUE REFERENCES politicians(id),
+    format TEXT NOT NULL CHECK (format IN ('pdf', 'json')),
+    source_url TEXT NOT NULL,
     first_seen_at TEXT NOT NULL
 );
 
@@ -49,7 +49,6 @@ CREATE TABLE IF NOT EXISTS declarations (
     parsed_at TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_documents_politician ON documents(politician_id);
 CREATE INDEX IF NOT EXISTS idx_versions_document ON document_versions(document_id);
 CREATE INDEX IF NOT EXISTS idx_declarations_version ON declarations(document_version_id);
 """
@@ -108,22 +107,23 @@ def upsert_document(
     conn: sqlite3.Connection,
     *,
     politician_id: int,
-    kind: str,
     source_url: str,
+    format: str,
 ) -> int:
+    """One register document per politician; its URL may change between revisions."""
     conn.execute(
         """
-        INSERT INTO documents (politician_id, kind, source_url, first_seen_at)
+        INSERT INTO documents (politician_id, format, source_url, first_seen_at)
         VALUES (?, ?, ?, ?)
-        ON CONFLICT(source_url) DO UPDATE SET
-            politician_id = excluded.politician_id,
-            kind = excluded.kind
+        ON CONFLICT(politician_id) DO UPDATE SET
+            format = excluded.format,
+            source_url = excluded.source_url
         """,
-        (politician_id, kind, source_url, _now()),
+        (politician_id, format, source_url, _now()),
     )
     conn.commit()
     row = conn.execute(
-        "SELECT id FROM documents WHERE source_url = ?", (source_url,)
+        "SELECT id FROM documents WHERE politician_id = ?", (politician_id,)
     ).fetchone()
     return int(row["id"])
 

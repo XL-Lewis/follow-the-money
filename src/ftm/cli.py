@@ -9,19 +9,29 @@ from .pipeline import run_fetch, run_parse
 from .web import app as web_app
 
 
-def _build_parser() -> argparse.ArgumentParser:
+def _common_options(*, defaults: bool) -> argparse.ArgumentParser:
+    # Subcommand copies must not carry defaults, or they overwrite options given
+    # before the subcommand (`ftm --data-dir X fetch`).
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument(
         "--data-dir",
         type=Path,
-        default=Path("data"),
-        help="Where to store the SQLite DB and downloaded PDFs (default: ./data)",
+        default=Path("data") if defaults else argparse.SUPPRESS,
+        help="Where to store the SQLite DB and downloaded documents (default: ./data)",
     )
     common.add_argument(
-        "-v", "--verbose", action="store_true", help="Verbose logging"
+        "-v",
+        "--verbose",
+        action="store_true",
+        default=False if defaults else argparse.SUPPRESS,
+        help="Verbose logging",
     )
+    return common
 
-    parser = argparse.ArgumentParser(prog="ftm", parents=[common])
+
+def _build_parser() -> argparse.ArgumentParser:
+    common = _common_options(defaults=False)
+    parser = argparse.ArgumentParser(prog="ftm", parents=[_common_options(defaults=True)])
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser(
         "fetch",

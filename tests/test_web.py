@@ -41,14 +41,14 @@ def seeded(tmp_data_dir: Path, pdf_builder):
     jane_doc = db_module.upsert_document(
         conn,
         politician_id=jane_id,
-        kind="statement",
         source_url="https://example.test/jane.pdf",
+        format="pdf",
     )
     alice_doc = db_module.upsert_document(
         conn,
         politician_id=alice_id,
-        kind="statement",
         source_url="https://example.test/alice.pdf",
+        format="pdf",
     )
     # Rename files to match content sha for the route to find them
     import hashlib
@@ -188,3 +188,37 @@ def test_raw_pdf_route_404s_for_invalid_sha_format(seeded):
     # Path traversal attempt and non-hex names rejected
     assert client.get("/raw/..%2Fetc%2Fpasswd.pdf").status_code == 404
     assert client.get("/raw/notahex.pdf").status_code == 404
+
+
+def test_raw_route_serves_json_and_rejects_mismatched_extension(seeded, tmp_data_dir):
+    cfg, jane_sha, _ = seeded
+    body = b'{"wasSuccessful": "True"}'
+    import hashlib
+
+    sha = hashlib.sha256(body).hexdigest()
+    path = tmp_data_dir / "raw" / f"{sha}.json"
+    path.write_bytes(body)
+    conn = db_module.connect(cfg.db_path)
+    pid = db_module.upsert_politician(
+        conn,
+        slug="bob-senate",
+        name="Bob",
+        chamber="senate",
+        party=None,
+        electorate_or_state=None,
+        aph_profile_url=None,
+    )
+    did = db_module.upsert_document(
+        conn, politician_id=pid, source_url="https://example.test/bob", format="json"
+    )
+    db_module.record_version(
+        conn, document_id=did, content_sha256=sha, file_path=str(path), etag=None, last_modified=None
+    )
+    conn.close()
+
+    client = create_app(cfg).test_client()
+    resp = client.get(f"/raw/{sha}.json")
+    assert resp.status_code == 200
+    assert resp.mimetype == "application/json"
+    assert client.get(f"/raw/{sha}.pdf").status_code == 404
+    assert client.get(f"/raw/{jane_sha}.exe").status_code == 404
