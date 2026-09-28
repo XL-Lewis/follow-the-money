@@ -12,7 +12,7 @@ DEFAULT_DATA_DIR = Path("data")
 class Config:
     data_dir: Path
     house_index_url: str = house.INDEX_URL
-    senate_index_url: str = senate.INDEX_URL
+    senate_api_base: str = senate.API_BASE
 
     @property
     def db_path(self) -> Path:

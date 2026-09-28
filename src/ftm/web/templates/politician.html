@@ -8,15 +8,14 @@
   {% if politician.electorate_or_state %} &middot; {{ politician.electorate_or_state }}{% endif %}
 </p>
 
-{% if not documents %}
+{% if not document %}
   <p class="empty">No declarations yet.</p>
-{% endif %}
-
-{% for doc in documents %}
+{% else %}
+{% set doc = document %}
 <div class="doc">
-  <h2>{{ doc.kind | capitalize }}</h2>
+  <h2>Register of interests</h2>
   <p class="meta">
-    <a href="/raw/{{ doc.version.content_sha256 }}.pdf">Original PDF</a>
+    <a href="/raw/{{ doc.version.content_sha256 }}.{{ doc.format }}">Original {{ doc.format | upper }}</a>
     &middot; fetched {{ doc.version.fetched_at }}
     &middot; <a href="{{ doc.source_url }}">source</a>
   </p>
@@ -46,5 +45,5 @@
     {% endif %}
   {% endfor %}
 </div>
-{% endfor %}
+{% endif %}
 {% endblock %}

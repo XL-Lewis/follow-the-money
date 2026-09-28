@@ -1,4 +1,5 @@
 import hashlib
+import json
 from pathlib import Path
 
 import pytest
@@ -8,232 +9,172 @@ from ftm import db as db_module
 from ftm.config import Config
 from ftm.pipeline import run_fetch, run_parse
 
-
+FIXTURES = Path(__file__).parent / "fixtures"
 HOUSE_INDEX = "https://example.test/house"
-SENATE_INDEX = "https://example.test/senate"
+SENATE_API = "https://example.test/api"
+JANE_PDF_URL = "https://example.test/files/jane.pdf"
 
-HOUSE_HTML_TEMPLATE = """
-<html><body><table>
-  <tr>
-    <td><a class="member-name" href="/profile/jane">Jane DOE</a></td>
-    <td>Liberal</td><td>Wentworth, NSW</td>
-    <td>
-      <a href="/files/jane-statement.pdf">Statement of Registrable Interests</a>
-    </td>
-  </tr>
-</table></body></html>
+HOUSE_HTML = f"""
+<table class="members-interests__table"><tbody>
+<tr>
+  <td class="date">10 October 2025 </td>
+  <td>Doe, Ms Jane, Member for Wentworth, NSW</td>
+  <td class="format"><a download="Doe" href="{JANE_PDF_URL}"><img alt="PDF format"/></a></td>
+</tr>
+</tbody></table>
 """
 
-SENATE_HTML_TEMPLATE = """
-<html><body><table>
-  <tr>
-    <td><a class="member-name" href="/profile/alice">Alice JONES</a></td>
-    <td>Greens</td><td>VIC</td>
-    <td>
-      <a href="/files/alice-statement.pdf">Statement of Registrable Interests</a>
-    </td>
-  </tr>
-</table></body></html>
-"""
+
+def _senate_list(cdap_ids: list[str], *, page: int = 1, page_count: int = 1) -> dict:
+    return {
+        "statementOfRegisterableInterests": [
+            {"cdapId": c, "name": f"Senator, {c}", "state": "Victoria", "senatorParty": "Greens"}
+            for c in cdap_ids
+        ],
+        "currentPage": page,
+        "pageCount": page_count,
+        "wasSuccessful": True,
+        "errors": None,
+    }
+
+
+SENATE_STATEMENT = (FIXTURES / "senate_statement.json").read_bytes()
+
+
+def _list_url(page: int) -> str:
+    return f"{SENATE_API}/queryStatements?pageSize=100&currentPage={page}"
+
+
+def _statement_url(cdap_id: str) -> str:
+    return f"{SENATE_API}/getSenatorStatement?cdapid={cdap_id}"
 
 
 @pytest.fixture
 def cfg(tmp_data_dir: Path) -> Config:
-    c = Config(
-        data_dir=tmp_data_dir,
-        house_index_url=HOUSE_INDEX,
-        senate_index_url=SENATE_INDEX,
-    )
+    c = Config(data_dir=tmp_data_dir, house_index_url=HOUSE_INDEX, senate_api_base=SENATE_API)
     c.ensure_dirs()
     db_module.init(c.db_path)
     return c
 
 
-def _statement_pdf(pdf_builder, path: Path, body_lines: list[str]) -> bytes:
-    return pdf_builder(path, body_lines)
+@pytest.fixture
+def jane_pdf(tmp_path: Path, pdf_builder) -> bytes:
+    return pdf_builder(tmp_path / "_jane.pdf", ["1. Shareholdings", "BHP Group Ltd"])
 
 
-def _setup_first_run(rsps, jane_pdf: bytes, alice_pdf: bytes):
-    rsps.add(responses.GET, HOUSE_INDEX, body=HOUSE_HTML_TEMPLATE, status=200)
-    rsps.add(responses.GET, SENATE_INDEX, body=SENATE_HTML_TEMPLATE, status=200)
-    rsps.add(
-        responses.GET,
-        "https://example.test/files/jane-statement.pdf",
-        body=jane_pdf,
-        status=200,
-        headers={"ETag": 'W/"jane-1"'},
-    )
-    rsps.add(
-        responses.GET,
-        "https://example.test/files/alice-statement.pdf",
-        body=alice_pdf,
-        status=200,
-        headers={"ETag": 'W/"alice-1"'},
-    )
+def _add_indexes(rsps):
+    rsps.add(responses.GET, HOUSE_INDEX, body=HOUSE_HTML)
+    rsps.add(responses.GET, _list_url(1), json=_senate_list(["317026"]))
+
+
+def _add_first_run(rsps, jane_pdf: bytes):
+    _add_indexes(rsps)
+    rsps.add(responses.GET, JANE_PDF_URL, body=jane_pdf, headers={"ETag": 'W/"jane-1"'})
+    rsps.add(responses.GET, _statement_url("317026"), body=SENATE_STATEMENT)
+
+
+def _count(cfg: Config, table: str) -> int:
+    conn = db_module.connect(cfg.db_path)
+    try:
+        return conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+    finally:
+        conn.close()
 
 
 @responses.activate
-def test_run_fetch_inserts_politicians_documents_and_versions(
-    cfg: Config, tmp_path: Path, pdf_builder
-):
-    jane_pdf = _statement_pdf(
-        pdf_builder, tmp_path / "_jane.pdf", ["1. Shareholdings", "BHP"]
-    )
-    alice_pdf = _statement_pdf(
-        pdf_builder, tmp_path / "_alice.pdf", ["1. Shareholdings", "CBA"]
-    )
-    _setup_first_run(responses, jane_pdf, alice_pdf)
+def test_run_fetch_stores_house_pdf_and_senate_json(cfg: Config, jane_pdf: bytes):
+    _add_first_run(responses, jane_pdf)
 
     run_fetch(cfg)
 
     conn = db_module.connect(cfg.db_path)
-    pols = conn.execute("SELECT name, chamber FROM politicians ORDER BY name").fetchall()
-    assert [(r[0], r[1]) for r in pols] == [
-        ("Alice JONES", "senate"),
-        ("Jane DOE", "house"),
-    ]
-    docs = conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
-    versions = conn.execute("SELECT COUNT(*) FROM document_versions").fetchone()[0]
-    assert docs == 2
-    assert versions == 2
-
-    # Files written under raw_dir keyed by sha
-    expected_jane = hashlib.sha256(jane_pdf).hexdigest()
-    assert (cfg.raw_dir / f"{expected_jane}.pdf").exists()
-
-
-@responses.activate
-def test_run_fetch_is_noop_on_second_run_when_304(
-    cfg: Config, tmp_path: Path, pdf_builder
-):
-    jane_pdf = _statement_pdf(
-        pdf_builder, tmp_path / "_jane.pdf", ["1. Shareholdings", "BHP"]
-    )
-    alice_pdf = _statement_pdf(
-        pdf_builder, tmp_path / "_alice.pdf", ["1. Shareholdings", "CBA"]
-    )
-    _setup_first_run(responses, jane_pdf, alice_pdf)
-    run_fetch(cfg)
-
-    responses.reset()
-    responses.add(responses.GET, HOUSE_INDEX, body=HOUSE_HTML_TEMPLATE, status=200)
-    responses.add(responses.GET, SENATE_INDEX, body=SENATE_HTML_TEMPLATE, status=200)
-    responses.add(
-        responses.GET, "https://example.test/files/jane-statement.pdf", status=304
-    )
-    responses.add(
-        responses.GET, "https://example.test/files/alice-statement.pdf", status=304
-    )
-
-    run_fetch(cfg)
-
-    conn = db_module.connect(cfg.db_path)
-    versions = conn.execute("SELECT COUNT(*) FROM document_versions").fetchone()[0]
-    assert versions == 2  # unchanged
-
-
-@responses.activate
-def test_run_fetch_creates_new_version_when_content_changes(
-    cfg: Config, tmp_path: Path, pdf_builder
-):
-    jane_pdf = _statement_pdf(
-        pdf_builder, tmp_path / "_jane.pdf", ["1. Shareholdings", "BHP"]
-    )
-    alice_pdf = _statement_pdf(
-        pdf_builder, tmp_path / "_alice.pdf", ["1. Shareholdings", "CBA"]
-    )
-    _setup_first_run(responses, jane_pdf, alice_pdf)
-    run_fetch(cfg)
-
-    jane_pdf_v2 = _statement_pdf(
-        pdf_builder,
-        tmp_path / "_jane2.pdf",
-        ["1. Shareholdings", "BHP", "Telstra"],
-    )
-    responses.reset()
-    responses.add(responses.GET, HOUSE_INDEX, body=HOUSE_HTML_TEMPLATE, status=200)
-    responses.add(responses.GET, SENATE_INDEX, body=SENATE_HTML_TEMPLATE, status=200)
-    responses.add(
-        responses.GET,
-        "https://example.test/files/jane-statement.pdf",
-        body=jane_pdf_v2,
-        status=200,
-        headers={"ETag": 'W/"jane-2"'},
-    )
-    responses.add(
-        responses.GET, "https://example.test/files/alice-statement.pdf", status=304
-    )
-
-    run_fetch(cfg)
-
-    conn = db_module.connect(cfg.db_path)
-    jane_versions = conn.execute(
-        """
-        SELECT v.* FROM document_versions v
-        JOIN documents d ON d.id = v.document_id
-        JOIN politicians p ON p.id = d.politician_id
-        WHERE p.name = 'Jane DOE'
-        ORDER BY v.id
-        """
+    rows = conn.execute(
+        "SELECT p.name, p.chamber, p.electorate_or_state, d.format FROM politicians p "
+        "JOIN documents d ON d.politician_id = p.id ORDER BY p.chamber"
     ).fetchall()
-    assert len(jane_versions) == 2
-    assert jane_versions[0]["content_sha256"] != jane_versions[1]["content_sha256"]
+    assert [tuple(r) for r in rows] == [
+        ("Jane Doe", "house", "Wentworth, NSW", "pdf"),
+        ("317026 Senator", "senate", "Victoria", "json"),
+    ]
+    assert (cfg.raw_dir / f"{hashlib.sha256(jane_pdf).hexdigest()}.pdf").exists()
+    assert (cfg.raw_dir / f"{hashlib.sha256(SENATE_STATEMENT).hexdigest()}.json").exists()
 
 
 @responses.activate
-def test_run_parse_populates_declarations(
-    cfg: Config, tmp_path: Path, pdf_builder
-):
-    jane_pdf = _statement_pdf(
-        pdf_builder,
-        tmp_path / "_jane.pdf",
-        [
-            "Statement of Registrable Interests",
-            "1. Shareholdings",
-            "BHP Group Ltd",
-            "11. Gifts",
-            "Bottle of wine",
-        ],
-    )
-    alice_pdf = _statement_pdf(
-        pdf_builder, tmp_path / "_alice.pdf", ["1. Shareholdings", "CBA"]
-    )
-    _setup_first_run(responses, jane_pdf, alice_pdf)
+def test_run_fetch_follows_senate_pagination(cfg: Config, jane_pdf: bytes):
+    responses.add(responses.GET, HOUSE_INDEX, body=HOUSE_HTML)
+    responses.add(responses.GET, JANE_PDF_URL, body=jane_pdf)
+    responses.add(responses.GET, _list_url(1), json=_senate_list(["1"], page=1, page_count=2))
+    responses.add(responses.GET, _list_url(2), json=_senate_list(["2"], page=2, page_count=2))
+    for cdap_id in ("1", "2"):
+        responses.add(responses.GET, _statement_url(cdap_id), body=SENATE_STATEMENT)
+
+    run_fetch(cfg)
+
+    assert _count(cfg, "politicians") == 3
+
+
+@responses.activate
+def test_run_fetch_is_noop_on_second_run_when_unchanged(cfg: Config, jane_pdf: bytes):
+    _add_first_run(responses, jane_pdf)
+    run_fetch(cfg)
+
+    responses.reset()
+    _add_indexes(responses)
+    responses.add(responses.GET, JANE_PDF_URL, status=304)
+    responses.add(responses.GET, _statement_url("317026"), body=SENATE_STATEMENT)
+    run_fetch(cfg)
+
+    assert _count(cfg, "document_versions") == 2
+
+
+@responses.activate
+def test_run_fetch_moves_document_when_url_changes(cfg: Config, jane_pdf: bytes, tmp_path, pdf_builder):
+    _add_first_run(responses, jane_pdf)
+    run_fetch(cfg)
+
+    moved_url = "https://example.test/files/jane.pdf?rev=2"
+    jane_v2 = pdf_builder(tmp_path / "_jane2.pdf", ["1. Shareholdings", "BHP", "Telstra"])
+    responses.reset()
+    responses.add(responses.GET, HOUSE_INDEX, body=HOUSE_HTML.replace(JANE_PDF_URL, moved_url))
+    responses.add(responses.GET, _list_url(1), json=_senate_list(["317026"]))
+    responses.add(responses.GET, moved_url, body=jane_v2)
+    responses.add(responses.GET, _statement_url("317026"), body=SENATE_STATEMENT)
+    run_fetch(cfg)
+
+    conn = db_module.connect(cfg.db_path)
+    docs = conn.execute(
+        "SELECT d.source_url, COUNT(v.id) FROM documents d "
+        "JOIN politicians p ON p.id = d.politician_id "
+        "JOIN document_versions v ON v.document_id = d.id "
+        "WHERE p.chamber = 'house' GROUP BY d.id"
+    ).fetchall()
+    assert [tuple(r) for r in docs] == [(moved_url, 2)]
+
+
+@responses.activate
+def test_run_parse_populates_declarations_from_both_formats(cfg: Config, jane_pdf: bytes):
+    _add_first_run(responses, jane_pdf)
     run_fetch(cfg)
     run_parse(cfg)
 
     conn = db_module.connect(cfg.db_path)
-    cats = dict(
-        conn.execute(
-            "SELECT category, COUNT(*) FROM declarations GROUP BY category"
-        ).fetchall()
-    )
-    assert cats.get("shareholdings", 0) >= 1
-    assert cats.get("gifts", 0) >= 1
+    rows = conn.execute(
+        "SELECT p.chamber, dl.category, dl.change, dl.item_text FROM declarations dl "
+        "JOIN document_versions v ON v.id = dl.document_version_id "
+        "JOIN documents d ON d.id = v.document_id "
+        "JOIN politicians p ON p.id = d.politician_id"
+    ).fetchall()
+    rows = {tuple(r) for r in rows}
+    assert ("house", "shareholdings", "statement", "BHP Group Ltd") in rows
+    assert ("senate", "gifts", "addition", "3 Cartons of Beer from the Brewers Association.") in rows
 
 
 @responses.activate
-def test_run_parse_is_idempotent(cfg: Config, tmp_path: Path, pdf_builder):
-    jane_pdf = _statement_pdf(
-        pdf_builder,
-        tmp_path / "_jane.pdf",
-        ["1. Shareholdings", "BHP Group Ltd"],
-    )
-    alice_pdf = _statement_pdf(
-        pdf_builder, tmp_path / "_alice.pdf", ["1. Shareholdings", "CBA"]
-    )
-    _setup_first_run(responses, jane_pdf, alice_pdf)
+def test_run_parse_is_idempotent(cfg: Config, jane_pdf: bytes):
+    _add_first_run(responses, jane_pdf)
     run_fetch(cfg)
     run_parse(cfg)
-    first = (
-        db_module.connect(cfg.db_path)
-        .execute("SELECT COUNT(*) FROM declarations")
-        .fetchone()[0]
-    )
+    first = _count(cfg, "declarations")
     run_parse(cfg)
-    second = (
-        db_module.connect(cfg.db_path)
-        .execute("SELECT COUNT(*) FROM declarations")
-        .fetchone()[0]
-    )
-    assert first == second and first > 0
+    assert _count(cfg, "declarations") == first > 0

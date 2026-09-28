@@ -41,7 +41,7 @@ def test_init_creates_all_tables(db_path: Path):
         assert {
             "id",
             "politician_id",
-            "kind",
+            "format",
             "source_url",
             "first_seen_at",
         } <= _table_columns(conn, "documents")
@@ -115,7 +115,7 @@ def test_upsert_politician_inserts_then_updates(db):
     assert row[0] == "Liberal"
 
 
-def test_upsert_document_dedupes_by_source_url(db):
+def test_upsert_document_keeps_one_document_per_politician(db):
     pid = db_module.upsert_politician(
         db,
         slug="jd-house",
@@ -126,18 +126,14 @@ def test_upsert_document_dedupes_by_source_url(db):
         aph_profile_url=None,
     )
     a = db_module.upsert_document(
-        db,
-        politician_id=pid,
-        kind="statement",
-        source_url="https://example.test/jd.pdf",
+        db, politician_id=pid, source_url="https://example.test/jd.pdf?rev=1", format="pdf"
     )
     b = db_module.upsert_document(
-        db,
-        politician_id=pid,
-        kind="statement",
-        source_url="https://example.test/jd.pdf",
+        db, politician_id=pid, source_url="https://example.test/jd.pdf?rev=2", format="pdf"
     )
     assert a == b
+    row = db.execute("SELECT source_url FROM documents WHERE id = ?", (a,)).fetchone()
+    assert row[0] == "https://example.test/jd.pdf?rev=2"
 
 
 def test_record_version_dedupes_on_sha(db, tmp_data_dir):
@@ -153,8 +149,8 @@ def test_record_version_dedupes_on_sha(db, tmp_data_dir):
     did = db_module.upsert_document(
         db,
         politician_id=pid,
-        kind="statement",
         source_url="https://example.test/jd.pdf",
+        format="pdf",
     )
     v1 = db_module.record_version(
         db,
@@ -198,8 +194,8 @@ def test_replace_declarations_is_idempotent(db, tmp_data_dir):
     did = db_module.upsert_document(
         db,
         politician_id=pid,
-        kind="statement",
         source_url="https://example.test/jd.pdf",
+        format="pdf",
     )
     vid = db_module.record_version(
         db,
@@ -253,8 +249,8 @@ def test_latest_version_for_document_returns_most_recent(db, tmp_data_dir):
     did = db_module.upsert_document(
         db,
         politician_id=pid,
-        kind="statement",
         source_url="https://example.test/jd.pdf",
+        format="pdf",
     )
     db_module.record_version(
         db,
@@ -288,7 +284,7 @@ def test_declaration_change_check_constraint_enforced(db, tmp_data_dir):
         aph_profile_url=None,
     )
     did = db_module.upsert_document(
-        db, politician_id=pid, kind="statement", source_url="https://example.test/jd.pdf"
+        db, politician_id=pid, source_url="https://example.test/jd.pdf", format="pdf"
     )
     vid = db_module.record_version(
         db,
