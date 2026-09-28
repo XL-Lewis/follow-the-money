@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from ftm import db as db_module
+from ftm.declarations import Declaration
 
 
 def _table_columns(conn, table: str) -> set[str]:
@@ -59,7 +60,10 @@ def test_init_creates_all_tables(db_path: Path):
             "id",
             "document_version_id",
             "category",
+            "change",
+            "holder",
             "item_text",
+            "changed_on",
             "ordinal",
             "parsed_at",
         } <= _table_columns(conn, "declarations")
@@ -209,25 +213,30 @@ def test_replace_declarations_is_idempotent(db, tmp_data_dir):
         db,
         document_version_id=vid,
         items=[
-            ("shareholdings", "BHP shares"),
-            ("gifts", "Bottle of wine"),
+            Declaration("shareholdings", "BHP shares", holder="spouse"),
+            Declaration(
+                "gifts", "Bottle of wine", change="addition", changed_on="2025-08-18"
+            ),
         ],
     )
     db_module.replace_declarations(
         db,
         document_version_id=vid,
         items=[
-            ("shareholdings", "BHP shares"),
-            ("gifts", "Bottle of wine"),
+            Declaration("shareholdings", "BHP shares", holder="spouse"),
+            Declaration(
+                "gifts", "Bottle of wine", change="addition", changed_on="2025-08-18"
+            ),
         ],
     )
     rows = db.execute(
-        "SELECT category, item_text FROM declarations WHERE document_version_id = ? ORDER BY ordinal",
+        "SELECT category, item_text, change, holder, changed_on FROM declarations "
+        "WHERE document_version_id = ? ORDER BY ordinal",
         (vid,),
     ).fetchall()
-    assert [(r[0], r[1]) for r in rows] == [
-        ("shareholdings", "BHP shares"),
-        ("gifts", "Bottle of wine"),
+    assert [tuple(r) for r in rows] == [
+        ("shareholdings", "BHP shares", "statement", "spouse", None),
+        ("gifts", "Bottle of wine", "addition", None, "2025-08-18"),
     ]
 
 
@@ -266,3 +275,32 @@ def test_latest_version_for_document_returns_most_recent(db, tmp_data_dir):
     latest = db_module.latest_version_for_document(db, did)
     assert latest["id"] == v2
     assert latest["content_sha256"] == "bbb"
+
+
+def test_declaration_change_check_constraint_enforced(db, tmp_data_dir):
+    pid = db_module.upsert_politician(
+        db,
+        slug="jd-house",
+        name="JD",
+        chamber="house",
+        party=None,
+        electorate_or_state=None,
+        aph_profile_url=None,
+    )
+    did = db_module.upsert_document(
+        db, politician_id=pid, kind="statement", source_url="https://example.test/jd.pdf"
+    )
+    vid = db_module.record_version(
+        db,
+        document_id=did,
+        content_sha256="aaa",
+        file_path=str(tmp_data_dir / "raw" / "aaa.pdf"),
+        etag=None,
+        last_modified=None,
+    )
+    with pytest.raises(Exception):
+        db_module.replace_declarations(
+            db,
+            document_version_id=vid,
+            items=[Declaration("gifts", "Wine", change="bogus")],  # type: ignore[arg-type]
+        )

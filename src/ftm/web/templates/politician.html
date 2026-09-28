@@ -21,15 +21,27 @@
     &middot; <a href="{{ doc.source_url }}">source</a>
   </p>
   {% for cat in categories %}
-    {% set items = doc.items_by_cat.get(cat, []) %}
-    {% if items %}
+    {% set section = doc.sections.get(cat) %}
+    {% if section and (section.statement or section.alterations) %}
     <div class="section">
       <h3>{{ category_labels[cat] }}</h3>
+      {% if section.statement %}
       <ul>
-        {% for item in items %}
-          <li>{{ item }}</li>
+        {% for d in section.statement %}
+          <li>{{ d.item_text }}{% if d.holder and d.holder != 'self' %} <span class="holder">{{ holder_labels[d.holder] }}</span>{% endif %}</li>
         {% endfor %}
       </ul>
+      {% endif %}
+      {% if section.alterations %}
+      <ul class="alterations">
+        {% for d in section.alterations %}
+          <li class="{{ d.change }}">
+            <span class="change">{{ 'Added' if d.change == 'addition' else 'Removed' }}{% if d.changed_on %} {{ d.changed_on }}{% endif %}</span>
+            {{ d.item_text }}{% if d.holder and d.holder != 'self' %} <span class="holder">{{ holder_labels[d.holder] }}</span>{% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+      {% endif %}
     </div>
     {% endif %}
   {% endfor %}

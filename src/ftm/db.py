@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
+from .declarations import Declaration
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS politicians (
     id INTEGER PRIMARY KEY,
@@ -39,7 +41,10 @@ CREATE TABLE IF NOT EXISTS declarations (
     id INTEGER PRIMARY KEY,
     document_version_id INTEGER NOT NULL REFERENCES document_versions(id),
     category TEXT NOT NULL,
+    change TEXT NOT NULL CHECK (change IN ('statement', 'addition', 'deletion')),
+    holder TEXT CHECK (holder IN ('self', 'spouse', 'dependent')),
     item_text TEXT NOT NULL,
+    changed_on TEXT,
     ordinal INTEGER NOT NULL,
     parsed_at TEXT NOT NULL
 );
@@ -178,7 +183,7 @@ def replace_declarations(
     conn: sqlite3.Connection,
     *,
     document_version_id: int,
-    items: Iterable[tuple[str, str]],
+    items: Iterable[Declaration],
 ) -> None:
     now = _now()
     conn.execute(
@@ -186,15 +191,25 @@ def replace_declarations(
         (document_version_id,),
     )
     rows = [
-        (document_version_id, category, item_text, ordinal, now)
-        for ordinal, (category, item_text) in enumerate(items)
+        (
+            document_version_id,
+            d.category,
+            d.change,
+            d.holder,
+            d.item_text,
+            d.changed_on,
+            ordinal,
+            now,
+        )
+        for ordinal, d in enumerate(items)
     ]
     if rows:
         conn.executemany(
             """
             INSERT INTO declarations
-                (document_version_id, category, item_text, ordinal, parsed_at)
-            VALUES (?, ?, ?, ?, ?)
+                (document_version_id, category, change, holder, item_text,
+                 changed_on, ordinal, parsed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             rows,
         )

@@ -1,6 +1,7 @@
 from pathlib import Path
 
-from ftm.parse.sections import CATEGORIES, split_into_sections
+from ftm.declarations import CATEGORIES
+from ftm.parse.sections import split_into_sections
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample_statement.txt"
 
@@ -106,7 +107,7 @@ def test_iter_items_helper_returns_category_text_pairs():
     from ftm.parse.sections import iter_items
 
     sections = _split()
-    pairs = list(iter_items(sections))
+    pairs = [(d.category, d.item_text) for d in iter_items(sections)]
     assert ("shareholdings", "BHP Group Ltd") in pairs
     assert ("gifts", "Tickets to ANZ Stadium from Sports Australia") in pairs
     # Order: categories in canonical order
